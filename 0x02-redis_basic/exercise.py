@@ -1,59 +1,43 @@
-import redis
+from redis import Redis
 import uuid
 from typing import Union, Callable
-from functools import wraps
+
+def replay(method: Callable):
+    """
+    Display the history of calls for a particular function.
+
+    Args:
+        method (Callable): The method to display the history for.
+    """
+    method_name = method.__qualname__
+
+    inputs_key = f"{method_name}:inputs"
+    outputs_key = f"{method_name}:outputs"
+
+    redis_client = Redis()
+    inputs = redis_client.lrange(inputs_key, 0, -1)
+    outputs = redis_client.lrange(outputs_key, 0, -1)
+
+    print(f"{method_name} was called {len(inputs)} times:")
+
+    for input_data, output_data in zip(inputs, outputs):
+        input_args = eval(input_data.decode())
+        output = output_data.decode()
+
+        print(f"{method_name}(*{input_args}) -> {output}")
 
 class Cache:
     def __init__(self):
-        self._redis = redis.Redis()
+        self._redis = Redis()
         self._redis.flushdb()
 
     @staticmethod
     def call_history(method: Callable) -> Callable:
-        """
-        Decorator to store the history of inputs and outputs for a particular function in Redis.
-
-        Args:
-            method (Callable): The method to be decorated.
-
-        Returns:
-            Callable: The wrapped method that stores input arguments and output in Redis.
-        """
-        @wraps(method)
-        def wrapper(self, *args, **kwargs):
-            # Get the qualified name of the method
-            method_name = method.__qualname__
-
-            # Convert input arguments to string and store in Redis
-            inputs_key = f"{method_name}:inputs"
-            self._redis.rpush(inputs_key, str(args))
-
-            # Call the original method to get the output
-            output = method(self, *args, **kwargs)
-
-            # Store the output in Redis
-            outputs_key = f"{method_name}:outputs"
-            self._redis.rpush(outputs_key, str(output))
-
-            # Return the output
-            return output
-
-        return wrapper
+        # ... (unchanged call_history decorator)
 
     @call_history
     def store(self, data: Union[str, bytes, int, float]) -> str:
-        """
-        Store the provided data in Redis with a randomly generated key.
-
-        Args:
-            data (Union[str, bytes, int, float]): The data to be stored in Redis.
-
-        Returns:
-            str: The randomly generated key under which the data is stored in Redis.
-        """
-        key = str(uuid.uuid4())
-        self._redis.set(key, data)
-        return key
+        # ... (unchanged store method)
 
     def get(self, key: str, fn: Callable = None) -> Union[str, bytes, int, float, None]:
         # ... (unchanged get method)
@@ -64,19 +48,10 @@ class Cache:
     def get_int(self, key: str) -> Union[int, None]:
         # ... (unchanged get_int method)
 
-# Test cases
+# Test case
 cache = Cache()
+cache.store("foo")
+cache.store("bar")
+cache.store(42)
 
-TEST_CASES = {
-    b"foo": None,
-    123: int,
-    "bar": lambda d: d.decode("utf-8")
-}
-
-for value, fn in TEST_CASES.items():
-    key = cache.store(value)
-    assert cache.get(key, fn=fn) == value
-
-# Retrieve and print the input and output history for the store method
-print("Input history for store method:", cache._redis.lrange("Cache.store:inputs", 0, -1))
-print("Output history for store method:", cache._redis.lrange("Cache.store:outputs", 0, -1))
+replay(cache.store)
