@@ -1,6 +1,6 @@
 import redis
 import uuid
-from typing import Union, Callable, Optional
+from typing import Union, Callable
 from functools import wraps
 
 class Cache:
@@ -9,28 +9,38 @@ class Cache:
         self._redis.flushdb()
 
     @staticmethod
-    def count_calls(method: Callable) -> Callable:
+    def call_history(method: Callable) -> Callable:
         """
-        Decorator to count how many times a method is called and store the count in Redis.
+        Decorator to store the history of inputs and outputs for a particular function in Redis.
 
         Args:
             method (Callable): The method to be decorated.
 
         Returns:
-            Callable: The wrapped method that increments the count and returns the original result.
+            Callable: The wrapped method that stores input arguments and output in Redis.
         """
         @wraps(method)
         def wrapper(self, *args, **kwargs):
             # Get the qualified name of the method
-            key = method.__qualname__
-            # Increment the count for the method
-            self._redis.incr(key)
-            # Call the original method and return its result
-            return method(self, *args, **kwargs)
+            method_name = method.__qualname__
+
+            # Convert input arguments to string and store in Redis
+            inputs_key = f"{method_name}:inputs"
+            self._redis.rpush(inputs_key, str(args))
+
+            # Call the original method to get the output
+            output = method(self, *args, **kwargs)
+
+            # Store the output in Redis
+            outputs_key = f"{method_name}:outputs"
+            self._redis.rpush(outputs_key, str(output))
+
+            # Return the output
+            return output
 
         return wrapper
 
-    @count_calls
+    @call_history
     def store(self, data: Union[str, bytes, int, float]) -> str:
         """
         Store the provided data in Redis with a randomly generated key.
@@ -45,7 +55,7 @@ class Cache:
         self._redis.set(key, data)
         return key
 
-    def get(self, key: str, fn: Optional[Callable] = None) -> Union[str, bytes, int, float, None]:
+    def get(self, key: str, fn: Callable = None) -> Union[str, bytes, int, float, None]:
         # ... (unchanged get method)
 
     def get_str(self, key: str) -> Union[str, None]:
@@ -67,8 +77,6 @@ for value, fn in TEST_CASES.items():
     key = cache.store(value)
     assert cache.get(key, fn=fn) == value
 
-# Get and print the counts for each method
-print("store method count:", cache._redis.get("Cache.store"))
-print("get method count:", cache._redis.get("Cache.get"))
-print("get_str method count:", cache._redis.get("Cache.get_str"))
-print("get_int method count:", cache._redis.get("Cache.get_int"))
+# Retrieve and print the input and output history for the store method
+print("Input history for store method:", cache._redis.lrange("Cache.store:inputs", 0, -1))
+print("Output history for store method:", cache._redis.lrange("Cache.store:outputs", 0, -1))
